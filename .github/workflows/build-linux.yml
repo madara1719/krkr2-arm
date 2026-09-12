@@ -1,96 +1,85 @@
-name: Build Linux
+name: build-linux-arm64
 
 on:
-  workflow_call:
   workflow_dispatch:
 
 env:
-  VCPKG_BINARY_SOURCES: "clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,readwrite"
-  VCPKG_INSTALL_OPTIONS: "--debug"
+  VCPKG_BINARY_SOURCES: "clear"   # sin caché remoto de NuGet, no lo necesitamos
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-24.04-arm   # runner ARM64 REAL, hosteado por GitHub, sin emulación
     env:
-      VCPKG_ROOT: ${{ github.workspace }}/.act/vcpkg
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg-root
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Delete huge unnecessary tools folder
-        if: ${{ !env.ACT }}
+      - name: Verificar arquitectura del runner
         run: |
-          if [ -d /opt/hostedtoolcache ]; then 
-            rm -rf /opt/hostedtoolcache
-            echo "Delete /opt/hostedtoolcache"
+          echo "uname -m: $(uname -m)"
+          echo "uname -a: $(uname -a)"
+
+      - name: Checkout (con submódulos)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Liberar espacio en disco (tools preinstalados no usados)
+        run: |
+          if [ -d /opt/hostedtoolcache ]; then
+            sudo rm -rf /opt/hostedtoolcache
+            echo "Borrado /opt/hostedtoolcache"
           fi
 
-      - name: Install Mono
-        run: |
-          sudo apt install ca-certificates gnupg
-          sudo gpg --homedir /tmp --no-default-keyring --keyring /usr/share/keyrings/mono-official-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
-          echo "deb [signed-by=/usr/share/keyrings/mono-official-archive-keyring.gpg] https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
-          sudo apt update
-          sudo apt install -y mono-complete
-
-      - name: Install system dependencies
+      - name: Instalar dependencias del sistema
         run: |
           sudo apt-get update
-          sudo apt-get install -y perl gcc g++ bison python3 yasm nasm ninja-build
-          
-          sudo apt install -y libxft-dev libxext-dev
-          sudo apt install -y libxxf86vm-dev libx11-dev libxmu-dev libglu1-mesa-dev libgl2ps-dev libxi-dev libzip-dev libpng-dev libcurl4-gnutls-dev libfontconfig1-dev libsqlite3-dev libglew-dev libssl-dev libgtk-3-dev binutils
-          sudo apt install -y autoconf autoconf-archive automake libtool pkg-config
-          sudo apt install libltdl-dev
+          sudo apt-get install -y \
+            perl build-essential ninja-build bison flex python3 \
+            nasm yasm pkg-config curl zip unzip tar git binutils \
+            autoconf autoconf-archive automake libtool libtool-bin libltdl-dev m4 \
+            libx11-dev libxft-dev libxext-dev libxxf86vm-dev libxmu-dev \
+            libglu1-mesa-dev libgl2ps-dev libxi-dev libzip-dev libpng-dev \
+            libcurl4-gnutls-dev libfontconfig1-dev libsqlite3-dev libglew-dev \
+            libssl-dev libgtk-3-dev \
+            libxrender-dev libxrandr-dev libxfixes-dev libxtst-dev libxcb1-dev \
+            libxau-dev libxdmcp-dev libdbus-1-dev libsystemd-dev libcap-dev \
+            libasound2-dev libatspi2.0-dev libmount-dev libblkid-dev \
+            libselinux1-dev libepoxy-dev
 
-          wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
-          chmod +x dotnet-install.sh
-          ./dotnet-install.sh --channel 8.0
-          echo "$HOME/.dotnet" >> $GITHUB_PATH
-
-      - name: Install CMake
+      - name: Instalar CMake >= 3.31.1
         uses: lukka/get-cmake@latest
         with:
-          cmakeVersion: 3.31.1
+          cmakeVersion: "3.31.1"
 
-      - name: Setup vcpkg
+      - name: Configurar vcpkg
         run: |
-          if [ ! -d "${{ env.VCPKG_ROOT }}" ]; then
-            git clone https://github.com/microsoft/vcpkg.git ${{ env.VCPKG_ROOT }}
-          fi
-          
-          ${{ env.VCPKG_ROOT }}/bootstrap-vcpkg.sh
-
-      - name: Add NuGet sources
-        shell: bash
-        run: |
-          mono `${{ env.VCPKG_ROOT }}/vcpkg fetch nuget | tail -n 1` \
-            sources add \
-            -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
-            -StorePasswordInClearText \
-            -Name GitHubPackages \
-            -UserName "${{ github.actor }}" \
-            -Password "${{ secrets.NUGET_API_KEY }}"
-          mono `${{ env.VCPKG_ROOT }}/vcpkg fetch nuget | tail -n 1` \
-            setapikey "${{ secrets.NUGET_API_KEY }}" \
-            -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
+          git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh"
 
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2.18
         with:
-          key: ${{ github.job }}-${{ matrix.os }}
+          key: build-linux-arm64
 
-      - name: Build Linux
+      - name: Compilar krkr2 (Linux ARM64, Release)
+        shell: bash
         run: |
+          set -euxo pipefail
           cmake --preset="Linux Release Config" -DENABLE_TESTS=OFF -DBUILD_TOOLS=OFF
           cmake --build --preset="Linux Release Build"
-          
-          cp $(find out/linux/release/ -name libfmod.so) out/linux/release/bin/krkr2
-          cp $(find out/linux/release/ -name libfmodL.so) out/linux/release/bin/krkr2
 
-      - name: Upload artifacts
-        if: ${{ !env.ACT && success() }}
+          # Copiar librerías de audio FMOD junto al binario (necesarias en runtime)
+          cp "$(find out/linux/release/ -name libfmod.so)" out/linux/release/bin/krkr2/ || true
+          cp "$(find out/linux/release/ -name libfmodL.so)" out/linux/release/bin/krkr2/ || true
+
+      - name: Debug - listar contenido de out/
+        if: always()
+        run: |
+          echo "== pwd =="; pwd
+          find out -maxdepth 6 2>/dev/null || echo "out/ no existe"
+
+      - name: Subir binario como artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: linux-binaries
-          path: |
-            out/linux/release/bin/krkr2/**
+          name: krkr2-linux-arm64
+          path: out/linux/release/bin/krkr2/**
+          if-no-files-found: warn
