@@ -73,9 +73,10 @@ jobs:
           # ANTES de compilar/enlazar
           FMOD_DEST="out/linux/release/vcpkg_installed/arm64-linux/share/cocos2dx/linux-specific/fmod/prebuilt/64-bit"
           if [ -d "$FMOD_DEST" ]; then
-            cp ci-assets/fmod-arm64/libfmod.so  "$FMOD_DEST/libfmod.so"
-            cp ci-assets/fmod-arm64/libfmodL.so "$FMOD_DEST/libfmodL.so"
+            # Copiar TODOS los archivos FMOD (incluyendo los versionados .so.14, .so.14.14)
+            cp ci-assets/fmod-arm64/libfmod*.so* "$FMOD_DEST/"
             echo "FMOD arm64 copiado a $FMOD_DEST"
+            ls -lh "$FMOD_DEST/"
             file "$FMOD_DEST/libfmod.so"
           else
             echo "ERROR: no existe $FMOD_DEST — revisa la ruta (puede variar)"
@@ -85,9 +86,12 @@ jobs:
 
           cmake --build --preset="Linux Release Build"
 
-          # Copiar librerías de audio FMOD (ya en arm64) junto al binario
-          cp "$(find out/linux/release/ -name libfmod.so)" out/linux/release/bin/krkr2/ || true
-          cp "$(find out/linux/release/ -name libfmodL.so)" out/linux/release/bin/krkr2/ || true
+          # Copiar TODAS las librerías de audio FMOD (ya en arm64) junto al binario
+          # Incluyendo los archivos versionados que el loader dinámico necesita
+          find out/linux/release/ -name 'libfmod*.so*' -exec cp {} out/linux/release/bin/krkr2/ \;
+          
+          echo "Archivos FMOD en el directorio final:"
+          ls -lh out/linux/release/bin/krkr2/libfmod* || true
 
       - name: Debug - listar contenido de out/
         if: always()
