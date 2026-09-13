@@ -21,8 +21,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          
-      - name: Liberar espacio en disco (tools preinstalados no usados)
+
+      - name: Liberar espacio en disco
         run: |
           if [ -d /opt/hostedtoolcache ]; then
             sudo rm -rf /opt/hostedtoolcache
@@ -58,40 +58,37 @@ jobs:
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2.18
         with:
-          key: build-linux-arm64
+          key: build-linux-arm64-debug
 
-      - name: Compilar krkr2 (Linux ARM64, Release)
+      - name: Compilar krkr2 (Linux ARM64, Debug)
         shell: bash
         run: |
           set -euxo pipefail
 
-          # Configurar (esto dispara la instalación de vcpkg, incluido el
-          # cocos2dx que trae el libfmod.so x86_64 equivocado)
-          cmake --preset="Linux Release Config" -DENABLE_TESTS=OFF -DBUILD_TOOLS=OFF
+          # Configurar en modo Debug para preservar los chequeos de null pointer
+          cmake --preset="Linux Debug Config" -DENABLE_TESTS=OFF -DBUILD_TOOLS=OFF
 
           # Reemplazar los binarios x86_64 de FMOD por los ARM64 reales
-          # ANTES de compilar/enlazar
-          FMOD_DEST="out/linux/release/vcpkg_installed/arm64-linux/share/cocos2dx/linux-specific/fmod/prebuilt/64-bit"
+          FMOD_DEST="out/linux/debug/vcpkg_installed/arm64-linux/share/cocos2dx/linux-specific/fmod/prebuilt/64-bit"
           if [ -d "$FMOD_DEST" ]; then
-            # Copiar TODOS los archivos FMOD (incluyendo los versionados .so.14, .so.14.14)
             cp ci-assets/fmod-arm64/libfmod*.so* "$FMOD_DEST/"
             echo "FMOD arm64 copiado a $FMOD_DEST"
             ls -lh "$FMOD_DEST/"
             file "$FMOD_DEST/libfmod.so"
           else
-            echo "ERROR: no existe $FMOD_DEST — revisa la ruta (puede variar)"
+            echo "ERROR: no existe $FMOD_DEST — revisa la ruta"
             find out -iname 'libfmod*.so' || true
             exit 1
           fi
 
-          cmake --build --preset="Linux Release Build"
+          # Compilar en modo Debug
+          cmake --build --preset="Linux Debug Build"
 
-          # Copiar TODAS las librerías de audio FMOD (ya en arm64) junto al binario
-          # Incluyendo los archivos versionados que el loader dinámico necesita
-          find out/linux/release/ -name 'libfmod*.so*' -exec cp {} out/linux/release/bin/krkr2/ \;
+          # Copiar TODAS las librerías FMOD junto al binario
+          find out/linux/debug/ -name 'libfmod*.so*' -exec cp {} out/linux/debug/bin/krkr2/ \;
           
           echo "Archivos FMOD en el directorio final:"
-          ls -lh out/linux/release/bin/krkr2/libfmod* || true
+          ls -lh out/linux/debug/bin/krkr2/libfmod* || true
 
       - name: Debug - listar contenido de out/
         if: always()
@@ -102,6 +99,6 @@ jobs:
       - name: Subir binario como artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: krkr2-linux-arm64
-          path: out/linux/release/bin/krkr2/**
+          name: krkr2-linux-arm64-debug
+          path: out/linux/debug/bin/krkr2/**
           if-no-files-found: warn
