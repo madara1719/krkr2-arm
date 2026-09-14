@@ -65,8 +65,12 @@ jobs:
         run: |
           set -euxo pipefail
 
-          # Configurar en modo Debug para preservar los chequeos de null pointer
-          cmake --preset="Linux Debug Config" -DENABLE_TESTS=OFF -DBUILD_TOOLS=OFF
+          # Configurar en modo Debug con flags para preservar null pointer checks (Issue #48)
+          cmake --preset="Linux Debug Config" \
+            -DENABLE_TESTS=OFF \
+            -DBUILD_TOOLS=OFF \
+            -DCMAKE_CXX_FLAGS="-fno-delete-null-pointer-checks" \
+            -DCMAKE_C_FLAGS="-fno-delete-null-pointer-checks"
 
           # Reemplazar los binarios x86_64 de FMOD por los ARM64 reales
           FMOD_DEST="out/linux/debug/vcpkg_installed/arm64-linux/share/cocos2dx/linux-specific/fmod/prebuilt/64-bit"
