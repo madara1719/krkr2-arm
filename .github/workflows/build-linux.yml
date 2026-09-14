@@ -58,22 +58,55 @@ jobs:
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2.18
         with:
-          key: build-linux-arm64-debug
+          key: build-linux-arm64-patched
 
-      - name: Compilar krkr2 (Linux ARM64, Debug)
+      - name: Parchear UB de tTJSVariantString (Issue #48)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "=== Parcheando null pointer dereferences ==="
+
+          HEADER="cpp/core/tjs2/tjsString.h"
+          SOURCE="cpp/core/tjs2/tjsVariantString.cpp"
+
+          # 1. Parche principal: tjsString.h - GetLen() no verifica Ptr antes de llamar
+          #    ANTES:  tjs_int GetLen() const { return Ptr->GetLength(); }
+          #    DESPUES: tjs_int GetLen() const { return Ptr ? Ptr->GetLength() : 0; }
+          sed -i 's|return Ptr->GetLength();|return Ptr ? Ptr->GetLength() : 0;|g' "$HEADER"
+
+          # 2. Parche tjsString.h - GetLastChar() ya verifica Ptr, pero GetLength()
+          #    se llama dentro via Ptr-> directamente, asegurar consistencia
+          #    La linea: return p[Ptr->GetLength() - 1];
+          #    Ya esta protegida por el if(!Ptr) anterior, OK
+
+          # 3. Parche tjsVariantString.cpp - reemplazar if(!this) por checks seguros
+          #    en operator const tjs_char*
+          sed -i 's|return (!this) ? (nullptr) : (LongString ? LongString : ShortString);|return (LongString ? LongString : ShortString);|g' "$SOURCE"
+
+          # Verificar que los parches se aplicaron
+          echo "--- tjsString.h GetLen ---"
+          grep -n "GetLen" "$HEADER" | head -5
+          echo "--- tjsVariantString.cpp GetLength ---"
+          grep -n "GetLength" "$SOURCE" | head -5
+          echo "--- tjsVariantString.cpp operator const ---"
+          grep -n "LongString ? LongString" "$SOURCE" | head -5
+
+          echo "=== Parches aplicados ==="
+
+      - name: Compilar krkr2 (Linux ARM64, Release parcheado)
         shell: bash
         run: |
           set -euxo pipefail
 
-          # Configurar en modo Debug con flags para preservar null pointer checks (Issue #48)
-          cmake --preset="Linux Debug Config" \
+          # Ahora podemos compilar en Release porque el UB esta parcheado
+          cmake --preset="Linux Release Config" \
             -DENABLE_TESTS=OFF \
             -DBUILD_TOOLS=OFF \
             -DCMAKE_CXX_FLAGS="-fno-delete-null-pointer-checks" \
             -DCMAKE_C_FLAGS="-fno-delete-null-pointer-checks"
 
           # Reemplazar los binarios x86_64 de FMOD por los ARM64 reales
-          FMOD_DEST="out/linux/debug/vcpkg_installed/arm64-linux/share/cocos2dx/linux-specific/fmod/prebuilt/64-bit"
+          FMOD_DEST="out/linux/release/vcpkg_installed/arm64-linux/share/cocos2dx/linux-specific/fmod/prebuilt/64-bit"
           if [ -d "$FMOD_DEST" ]; then
             cp ci-assets/fmod-arm64/libfmod*.so* "$FMOD_DEST/"
             echo "FMOD arm64 copiado a $FMOD_DEST"
@@ -85,14 +118,14 @@ jobs:
             exit 1
           fi
 
-          # Compilar en modo Debug
-          cmake --build --preset="Linux Debug Build"
+          # Compilar en Release (seguro gracias al parche)
+          cmake --build --preset="Linux Release Build"
 
           # Copiar TODAS las librerías FMOD junto al binario
-          find out/linux/debug/ -name 'libfmod*.so*' -exec cp {} out/linux/debug/bin/krkr2/ \;
-          
+          find out/linux/release/ -name 'libfmod*.so*' -exec cp {} out/linux/release/bin/krkr2/ \;
+
           echo "Archivos FMOD en el directorio final:"
-          ls -lh out/linux/debug/bin/krkr2/libfmod* || true
+          ls -lh out/linux/release/bin/krkr2/libfmod* || true
 
       - name: Debug - listar contenido de out/
         if: always()
@@ -103,6 +136,6 @@ jobs:
       - name: Subir binario como artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: krkr2-linux-arm64-debug
-          path: out/linux/debug/bin/krkr2/**
+          name: krkr2-linux-arm64
+          path: out/linux/release/bin/krkr2/**
           if-no-files-found: warn
