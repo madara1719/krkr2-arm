@@ -67,24 +67,32 @@ jobs:
           HEADER="cpp/core/tjs2/tjsString.h"
           SOURCE="cpp/core/tjs2/tjsVariantString.cpp"
 
-          # 1) GetLen(): verificar Ptr ANTES de llamar (se mantiene del v1)
+          # Diagnóstico: mostrar la línea real antes de tocar nada
+          grep -n "LongString" "$SOURCE" || true
+
+          # 1) GetLen(): verificar Ptr ANTES de llamar (funciona, se mantiene)
           sed -i 's|return Ptr->GetLength();|return Ptr ? Ptr->GetLength() : 0;|g' "$HEADER"
 
-          # 2) operator const tjs_char*: RESTAURAR el guard y devolver "" en vez de nullptr
+          # 2) operator const tjs_char*: guardar null y devolver "" en vez de nullptr
           python3 - <<'EOF'
+          import re
           p = "cpp/core/tjs2/tjsVariantString.cpp"
           s = open(p, encoding="utf-8", errors="surrogateescape").read()
-          old = "return (LongString ? LongString : ShortString);"
+
+          # Patrón ORIGINAL del repo (sin parches previos aplicados):
+          pattern = re.compile(
+              r"return\s*\(!this\)\s*\?\s*\(nullptr\)\s*:\s*"
+              r"\(LongString\s*\?\s*LongString\s*:\s*ShortString\);")
           new = ("if (!this) { static const tjs_char empty_str[1] = { 0 }; return empty_str; }\n"
                  "\treturn LongString ? LongString : ShortString;")
-          assert old in s, "patron de operator no encontrado"
-          s = s.replace(old, new, 1)
-          open(p, "w", encoding="utf-8", errors="surrogateescape").write(s)
+          s2, n = pattern.subn(new, s, count=1)
+          assert n == 1, "patron de operator no encontrado"
+          open(p, "w", encoding="utf-8", errors="surrogateescape").write(s2)
           print("parche operator aplicado")
           EOF
 
           echo "--- verificacion ---"
-          grep -n -B2 -A4 "operator const tjs_char" "$SOURCE" | head -20
+          grep -n -A4 "operator const tjs_char" "$SOURCE" | head -20
           grep -n "GetLen" "$HEADER" | head -5
 
       - name: Compilar krkr2 (Linux ARM64, Release parcheado)
