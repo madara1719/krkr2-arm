@@ -60,38 +60,32 @@ jobs:
         with:
           key: build-linux-arm64-patched
 
-      - name: Parchear UB de tTJSVariantString (Issue #48)
+      - name: Parchear UB de tTJSVariantString (Issue #48) - v2
         shell: bash
         run: |
           set -euxo pipefail
-          echo "=== Parcheando null pointer dereferences ==="
-
           HEADER="cpp/core/tjs2/tjsString.h"
           SOURCE="cpp/core/tjs2/tjsVariantString.cpp"
 
-          # 1. Parche principal: tjsString.h - GetLen() no verifica Ptr antes de llamar
-          #    ANTES:  tjs_int GetLen() const { return Ptr->GetLength(); }
-          #    DESPUES: tjs_int GetLen() const { return Ptr ? Ptr->GetLength() : 0; }
+          # 1) GetLen(): verificar Ptr ANTES de llamar (se mantiene del v1)
           sed -i 's|return Ptr->GetLength();|return Ptr ? Ptr->GetLength() : 0;|g' "$HEADER"
 
-          # 2. Parche tjsString.h - GetLastChar() ya verifica Ptr, pero GetLength()
-          #    se llama dentro via Ptr-> directamente, asegurar consistencia
-          #    La linea: return p[Ptr->GetLength() - 1];
-          #    Ya esta protegida por el if(!Ptr) anterior, OK
+          # 2) operator const tjs_char*: RESTAURAR el guard y devolver "" en vez de nullptr
+          python3 - <<'EOF'
+          p = "cpp/core/tjs2/tjsVariantString.cpp"
+          s = open(p, encoding="utf-8", errors="surrogateescape").read()
+          old = "return (LongString ? LongString : ShortString);"
+          new = ("if (!this) { static const tjs_char empty_str[1] = { 0 }; return empty_str; }\n"
+                 "\treturn LongString ? LongString : ShortString;")
+          assert old in s, "patron de operator no encontrado"
+          s = s.replace(old, new, 1)
+          open(p, "w", encoding="utf-8", errors="surrogateescape").write(s)
+          print("parche operator aplicado")
+          EOF
 
-          # 3. Parche tjsVariantString.cpp - reemplazar if(!this) por checks seguros
-          #    en operator const tjs_char*
-          sed -i 's|return (!this) ? (nullptr) : (LongString ? LongString : ShortString);|return (LongString ? LongString : ShortString);|g' "$SOURCE"
-
-          # Verificar que los parches se aplicaron
-          echo "--- tjsString.h GetLen ---"
+          echo "--- verificacion ---"
+          grep -n -B2 -A4 "operator const tjs_char" "$SOURCE" | head -20
           grep -n "GetLen" "$HEADER" | head -5
-          echo "--- tjsVariantString.cpp GetLength ---"
-          grep -n "GetLength" "$SOURCE" | head -5
-          echo "--- tjsVariantString.cpp operator const ---"
-          grep -n "LongString ? LongString" "$SOURCE" | head -5
-
-          echo "=== Parches aplicados ==="
 
       - name: Compilar krkr2 (Linux ARM64, Release parcheado)
         shell: bash
